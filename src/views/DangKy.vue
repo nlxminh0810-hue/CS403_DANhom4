@@ -25,13 +25,23 @@
         <input
           class="login-input"
           v-model.trim="form.name"
-          placeholder="Nhập tên đăng nhập"
+          placeholder="Nhập họ và tên"
+          autocomplete="name"
+        >
+
+        <input
+          class="login-input"
+          v-model.trim="form.email"
+          type="email"
+          placeholder="Nhập địa chỉ email"
+          autocomplete="email"
         >
 
         <input
           class="login-input"
           v-model.trim="form.phone"
           placeholder="Nhập số điện thoại"
+          autocomplete="tel"
         >
 
         <input
@@ -39,6 +49,7 @@
           v-model="form.password"
           type="password"
           placeholder="Nhập mật khẩu"
+          autocomplete="new-password"
         >
 
         <input
@@ -46,6 +57,7 @@
           v-model="form.confirmPassword"
           type="password"
           placeholder="Xác nhận lại mật khẩu"
+          autocomplete="new-password"
         >
 
         <p class="register-text">
@@ -68,8 +80,12 @@
           {{ error }}
         </p>
 
-        <button class="login-submit">
-          Đăng kí
+        <button
+          class="login-submit"
+          type="submit"
+          :disabled="isLoading"
+        >
+          {{ isLoading ? 'Đang tạo tài khoản...' : 'Tạo tài khoản' }}
         </button>
 
         <button
@@ -104,22 +120,6 @@
 
         </button>
 
-        <button
-          class="social-btn phone-btn"
-          type="button"
-          @click="phoneRegister"
-        >
-
-          <span class="social-icon">
-            <i class="bi bi-telephone-fill"></i>
-          </span>
-
-          <span>
-            Tiếp tục với Phone
-          </span>
-
-        </button>
-
       </div>
     </form>
   </section>
@@ -130,6 +130,13 @@ import {
   reactive,
   ref
 } from 'vue'
+
+const props = defineProps({
+  customers: {
+    type: Array,
+    default: () => []
+  }
+})
 
 const emit = defineEmits([
   'submit',
@@ -142,6 +149,8 @@ const form = reactive({
 
   name: '',
 
+  email: '',
+
   phone: '',
 
   password: '',
@@ -150,98 +159,65 @@ const form = reactive({
 })
 
 const error = ref('')
+const isLoading = ref(false)
 
-function submit() {
-
+async function submit() {
   error.value = ''
 
-  if (
-    !form.name ||
-    !form.phone ||
-    !form.password ||
-    !form.confirmPassword
-  ) {
+  if (!form.name || !form.email || !form.phone || !form.password || !form.confirmPassword) {
+    error.value = 'Vui lòng nhập đầy đủ thông tin.'
+    return
+  }
 
-    error.value =
-      'Vui lòng nhập đầy đủ thông tin.'
+  if (form.email.length > 50 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+    error.value = 'Email không hợp lệ hoặc dài quá 50 ký tự.'
+    return
+  }
 
+  if (props.customers.some((customer) =>
+    String(customer.email || customer.username).toLowerCase() === form.email.toLowerCase()
+  )) {
+    error.value = 'Email này đã được sử dụng.'
+    return
+  }
+
+  if (!/^\d{9,15}$/.test(form.phone)) {
+    error.value = 'Số điện thoại cần có từ 9 đến 15 chữ số.'
     return
   }
 
   if (form.password.length < 6) {
-
-    error.value =
-      'Mật khẩu cần tối thiểu 6 ký tự.'
-
+    error.value = 'Mật khẩu cần tối thiểu 6 ký tự.'
     return
   }
 
-  if (
-    form.password !==
-    form.confirmPassword
-  ) {
-
-    error.value =
-      'Mật khẩu xác nhận chưa khớp.'
-
+  if (form.password !== form.confirmPassword) {
+    error.value = 'Mật khẩu xác nhận chưa khớp.'
     return
   }
 
-  // USER MẶC ĐỊNH
-  emit('submit', {
+  isLoading.value = true
+  try {
+    const response = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: form.email.toLowerCase(),
+        name: form.name,
+        phone: form.phone,
+        password: form.password
+      })
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message || 'Không thể tạo tài khoản.')
 
-    id: Date.now(),
-
-    username: form.name,
-
-    password: form.password,
-
-    role: 'user',
-
-    name: form.name,
-
-    phone: form.phone,
-
-    birth: '--/--/----',
-
-    created:
-      new Date()
-      .toLocaleDateString('vi-VN'),
-
-    orders: 0,
-
-    locked: false
-  })
+    sessionStorage.setItem('soccerhub-session', result.token)
+    emit('submit', result.user)
+  } catch (requestError) {
+    error.value = requestError.message || 'Không thể tạo tài khoản.'
+  } finally {
+    isLoading.value = false
+  }
 }
 
-function phoneRegister() {
-
-  emit('submit', {
-
-    id: Date.now(),
-
-    username:
-      form.name || 'phoneuser',
-
-    password: '123456',
-
-    role: 'user',
-
-    name:
-      form.name || 'Phone User',
-
-    phone:
-      form.phone || '0900000000',
-
-    birth: '--/--/----',
-
-    created:
-      new Date()
-      .toLocaleDateString('vi-VN'),
-
-    orders: 0,
-
-    locked: false
-  })
-}
 </script>

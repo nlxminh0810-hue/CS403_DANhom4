@@ -879,6 +879,12 @@ th{
   font-size:14px;
 }
 
+.auth-note{
+  color:var(--muted);
+  font-size:14px;
+  line-height:1.5;
+}
+
 .login-links button,
 .register-text button{
   border:none;

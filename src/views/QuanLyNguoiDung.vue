@@ -73,7 +73,7 @@
 
               <button
                 class="action-btn lock-btn"
-                @click="user.locked = !user.locked"
+                @click="$emit('status', user.id, !user.locked)"
               >
                 {{
                   user.locked
@@ -142,7 +142,7 @@ defineProps({
   customers: Array
 })
 
-defineEmits(['delete'])
+defineEmits(['delete', 'status'])
 
 const selected = ref(null)
 </script>

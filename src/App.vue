@@ -79,6 +79,7 @@
       <!-- REGISTER -->
       <DangKy
         v-else-if="page === 'register'"
+        :customers="customers"
         @submit="register"
         @social="socialLogin"
         @login="openLogin"
@@ -104,6 +105,8 @@
         v-else-if="page === 'payment'"
         :cart="cart"
         :total="cartTotal"
+        :customer="currentUser"
+        :initial-delivery="checkoutDelivery"
         @confirm="confirmOrder"
       />
 
@@ -112,6 +115,7 @@
         v-else-if="page === 'orders'"
         :orders="orders"
         :current-user="currentUser"
+        @status="updateOrderStatus"
       />
 
       <!-- PROFILE -->
@@ -146,6 +150,7 @@
         "
         :customers="customers"
         @delete="deleteCustomer"
+        @status="setCustomerStatus"
       />
 
       <!-- REPORT -->
@@ -166,6 +171,7 @@
 <script setup>
 import {
   computed,
+  onMounted,
   ref
 } from 'vue'
 
@@ -189,17 +195,6 @@ import QuanLySanPham from './views/QuanLySanPham.vue'
 import QuanLyNguoiDung from './views/QuanLyNguoiDung.vue'
 import BaoCao from './views/BaoCao.vue'
 
-import {
-  products as productSeed
-} from './data/products'
-
-import {
-  orders as orderSeed
-} from './data/orders'
-
-import {
-  customers as customerSeed
-} from './data/customers'
 
 /* =========================
    STATE
@@ -213,13 +208,43 @@ const selectedProduct = ref(null)
 
 const currentUser = ref(null)
 
-const products = ref([...productSeed])
+const products = ref([])
+const orders = ref([])
+const customers = ref([])
+const apiToken = ref(sessionStorage.getItem('soccerhub-session') || '')
 
-const orders = ref([...orderSeed])
+async function apiFetch(path, options = {}) {
+  const headers = { ...(options.headers || {}) }
+  if (apiToken.value) headers.Authorization = `Bearer ${apiToken.value}`
+  if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
+  return fetch(path, { ...options, headers })
+}
 
-const customers = ref([...customerSeed])
+function productWithImage(product) {
+  return { ...product, image: new URL(`./assets/img/img${product.id}.png`, import.meta.url).href }
+}
+
+async function loadProducts(admin = false) {
+  const response = await apiFetch(admin ? '/api/admin/products' : '/api/products')
+  const result = await response.json()
+  if (!response.ok) throw new Error(result.message || 'KhÃ´ng thá»ƒ táº£i sáº£n pháº©m.')
+  products.value = (result.products || []).map(productWithImage)
+}
+
+async function loadOrders() {
+  const response = await apiFetch('/api/orders')
+  const body = await response.text()
+  let result = {}
+  try { result = JSON.parse(body) } catch {}
+  if (!response.ok) {
+    const detail = result.message || body || 'Máy chủ không gửi nội dung lỗi.'
+    throw new Error(`Tải đơn hàng thất bại (HTTP ${response.status}): ${detail}`)
+  }
+  orders.value = result.orders || []
+}
 
 const cart = ref([])
+const checkoutDelivery = ref(null)
 
 const profile = ref({
 
@@ -423,18 +448,33 @@ function openRegister() {
   page.value = 'register'
 }
 
-function login(user) {
-  // `user` here is credentials emitted from the login form
-  const credentials = user
-
-  const found = customers.value.find(
+async function login(credentials) {
+  let found = customers.value.find(
     (c) => c.username === credentials.email && c.password === credentials.password
   )
 
   if (!found) {
-    alert('Tài khoản hoặc mật khẩu không đúng.')
-    page.value = 'login'
-    return
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(credentials)
+      })
+      const result = await response.json()
+      if (!response.ok) {
+        alert(result.message || 'Không thể đăng nhập.')
+        page.value = 'login'
+        return
+      }
+      found = result.user
+      apiToken.value = result.token
+      sessionStorage.setItem('soccerhub-session', result.token)
+    } catch (error) {
+      console.error('Account login request failed:', error)
+      alert('Không thể kết nối máy chủ đăng nhập. Vui lòng thử lại.')
+      page.value = 'login'
+      return
+    }
   }
 
   if (found.locked) {
@@ -444,6 +484,17 @@ function login(user) {
 
   currentUser.value = { ...found }
 
+  apiToken.value = sessionStorage.getItem('soccerhub-session') || apiToken.value
+  try {
+    await Promise.all([loadProducts(found.role === 'admin'), loadOrders()])
+    if (found.role === 'admin') {
+      const response = await apiFetch('/api/admin/users')
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.message)
+      customers.value = result.customers || []
+    }
+  } catch (error) { alert(error.message); return }
+
   profile.value.name = found.name || ''
   profile.value.phone = found.phone || ''
   profile.value.email =
@@ -452,22 +503,25 @@ function login(user) {
   page.value = found.role === 'admin' ? 'adminProducts' : 'profile'
 }
 
-function register(user) {
-
-  // MẶC ĐỊNH USER
-  user.role = 'user'
-
-  customers.value.unshift(user)
+async function register(user) {
+  customers.value.unshift({ ...user })
 
   currentUser.value = user
+  apiToken.value = sessionStorage.getItem('soccerhub-session') || ''
 
   profile.value.name = user.name
 
   profile.value.phone = user.phone
 
   profile.value.email =
-    `${user.username}@soccerhub.vn`
+    user.email || `${user.username}@soccerhub.vn`
 
+  try {
+    await Promise.all([loadProducts(), loadOrders()])
+  } catch (error) {
+    console.error('Account was created, but initial data loading failed:', error)
+    alert(`Tài khoản đã tạo và đăng nhập thành công, nhưng tải dữ liệu ban đầu thất bại. ${error.message}`)
+  }
   page.value = 'profile'
 }
 
@@ -499,6 +553,8 @@ function socialLogin(provider) {
 function logout() {
 
   currentUser.value = null
+  apiToken.value = ''
+  sessionStorage.removeItem('soccerhub-session')
 
   cart.value = []
 
@@ -520,12 +576,15 @@ function deleteAccount() {
    PROFILE
 ========================= */
 
-function saveProfile(nextProfile) {
-
-  profile.value = nextProfile
-
-  currentUser.value.name =
-    nextProfile.name
+async function saveProfile(nextProfile) {
+  try {
+    const response = await apiFetch('/api/profile', { method:'PUT', body:JSON.stringify(nextProfile) })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message)
+    profile.value = nextProfile
+    currentUser.value.name = nextProfile.name
+    currentUser.value.phone = nextProfile.phone
+  } catch(error) { alert(error.message || 'Could not save profile') }
 }
 
 /* =========================
@@ -611,144 +670,117 @@ function removeCart(key) {
    PAYMENT
 ========================= */
 
-function confirmOrder(payment) {
-
+async function confirmOrder(payment) {
   if (!cart.value.length) return
+  const methodId = typeof payment === 'string' ? 'cod' : payment.methodId
+  const method = typeof payment === 'string' ? payment : payment.method
+  const delivery = typeof payment === 'string' ? checkoutDelivery.value : payment.delivery
+  try {
+    const response = await apiFetch('/api/orders', { method:'POST', body:JSON.stringify({ customer:currentUser.value, delivery, items:cart.value.map(({id,qty})=>({id,qty})), methodId, method }) })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message || 'Could not create order')
+    await Promise.all([loadOrders(), loadProducts()])
+    cart.value = []
+    page.value = 'orders'
+  } catch (error) { alert(error.message || 'Could not create order') }
+}
 
-  const method =
-    typeof payment === 'string'
-      ? payment
-      : payment.method
+async function resumeVnpayReturn() {
+  const url = new URL(window.location.href)
+  if (url.searchParams.get('vnpay') !== '1') return
 
-  const methodId =
-    typeof payment === 'string'
-      ? ''
-      : payment.methodId
+  const orderCode = url.searchParams.get('ref') || ''
+  const pending = sessionStorage.getItem('soccerhub-vnpay-pending')
+  sessionStorage.removeItem('soccerhub-vnpay-pending')
+  window.history.replaceState({}, '', `${url.pathname}${url.hash}`)
 
-  const deliveryInfo =
-    typeof payment === 'string'
-      ? null
-      : payment.delivery
-
-  const orderTotal =
-    typeof payment === 'string'
-      ? cartTotal.value
-      : payment.total
-
-  const productText =
-    cart.value
-      .map((item) =>
-        `${item.name} - ${item.qty} chiếc / ${item.color} / ${item.size}`
-      )
-      .join(', ')
-
-  const deliveryNote =
-    deliveryInfo
-      ? `${deliveryInfo.fullName} - ${deliveryInfo.phone} - ${deliveryInfo.address}, ${deliveryInfo.ward}, ${deliveryInfo.district}, ${deliveryInfo.city}`
-      : ''
-
-  const isCod =
-    methodId === 'cod' ||
-    method === 'Trả tiền khi nhận hàng'
-
-  const newOrder = {
-
-    code:
-      `SH${String(
-        orders.value.length + 1
-      ).padStart(3,'0')}`,
-
-    user:
-      currentUser.value.username,
-
-    delivery:
-      'Giao tiêu chuẩn',
-
-    status:
-      isCod
-        ? 'Chờ xác nhận'
-        : 'Đang xử lý',
-
-    qty: cartCount.value,
-
-    total: orderTotal,
-
-    note:
-      deliveryNote
-        ? `${method} | ${deliveryNote}`
-        : method,
-
-    product: productText,
-
-    review: null
+  if (pending) {
+    try {
+      const context = JSON.parse(pending)
+      cart.value = context.cart || []
+      currentUser.value = context.currentUser || null
+      profile.value.name = context.currentUser?.name || ''
+      checkoutDelivery.value = context.delivery || null
+    } catch {
+      cart.value = []
+    }
   }
 
-  orders.value.unshift(newOrder)
+  page.value = currentUser.value ? 'payment' : 'home'
 
-  cart.value = []
+  if (!orderCode) {
+    page.value = 'payment'
+    alert('Không nhận được mã đơn hàng từ VNPay.')
+    return
+  }
 
-  page.value = 'orders'
+  try {
+    const response = await apiFetch(`/api/payments/${encodeURIComponent(orderCode)}`)
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message || 'Không kiểm tra được giao dịch.')
+
+    if (result.paymentStatus === 'DaThanhToan') {
+      orders.value.unshift(result.order)
+      cart.value = []
+      checkoutDelivery.value = null
+      page.value = 'orders'
+      alert(`Thanh toán thành công. Mã đơn hàng: ${orderCode}`)
+    } else {
+      page.value = 'payment'
+      alert('Giao dịch chưa thanh toán thành công. Bạn có thể thử lại.')
+    }
+  } catch (error) {
+    page.value = currentUser.value ? 'payment' : 'home'
+    alert(error.message || 'Không thể kiểm tra trạng thái thanh toán.')
+  }
 }
+
+onMounted(resumeVnpayReturn)
 
 /* =========================
    PRODUCT ADMIN
 ========================= */
 
-function addProduct(product) {
-
-  products.value.push(product)
+async function addProduct(product) {
+  try { const r=await apiFetch('/api/admin/products',{method:'POST',body:JSON.stringify(product)});const d=await r.json();if(!r.ok)throw new Error(d.message);await loadProducts(true) } catch(error){alert(error.message)}
 }
 
-function updateProduct(id,patch) {
-
-  const index =
-    products.value.findIndex(
-      (item)=>item.id === id
-    )
-
-  if (index !== -1) {
-
-    products.value[index] = {
-
-      ...products.value[index],
-
-      ...patch
-    }
-  }
+async function updateProduct(id,patch) {
+  try { const r=await apiFetch('/api/admin/products/'+id,{method:'PUT',body:JSON.stringify(patch)});const d=await r.json();if(!r.ok)throw new Error(d.message);await loadProducts(true) } catch(error){alert(error.message)}
 }
 
-function deleteProduct(id) {
-
-  products.value =
-    products.value.filter(
-      (item)=>item.id !== id
-    )
+async function deleteProduct(id) {
+  try { const r=await apiFetch('/api/admin/products/'+id,{method:'DELETE'});const d=await r.json();if(!r.ok)throw new Error(d.message);await loadProducts(true) } catch(error){alert(error.message)}
 }
 
 /* =========================
    USER ADMIN
 ========================= */
 
-function deleteCustomer(id) {
-
-  const target =
-    customers.value.find(
-      item => item.id === id
-    )
-
-  // KHÔNG XÓA ADMIN
-  if (target?.role === 'admin') {
-
-    alert(
-      'Không thể xóa admin.'
-    )
-
-    return
-  }
-
-  customers.value =
-    customers.value.filter(
-      (item)=>item.id !== id
-    )
+async function deleteCustomer(id) {
+  try { const r=await apiFetch('/api/admin/users/'+id+'/status',{method:'PATCH',body:JSON.stringify({locked:true})});const d=await r.json();if(!r.ok)throw new Error(d.message);customers.value=customers.value.filter(item=>item.id!==id) } catch(error){alert(error.message)}
 }
+
+async function setCustomerStatus(id, locked) {
+  try {
+    const response = await apiFetch(`/api/admin/users/${id}/status`, { method:'PATCH', body:JSON.stringify({locked}) })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message)
+    const customer = customers.value.find(item => item.id === id)
+    if (customer) customer.locked = locked
+  } catch(error) { alert(error.message) }
+}
+
+async function updateOrderStatus(code, status) {
+  try {
+    const response = await apiFetch(`/api/admin/orders/${code}/status`, { method:'PATCH', body:JSON.stringify({status}) })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message)
+  } catch(error) {
+    alert(error.message)
+    await loadOrders()
+  }
+}
+
+onMounted(async()=>{ try { await loadProducts() } catch(error) { console.error(error) } })
 </script>

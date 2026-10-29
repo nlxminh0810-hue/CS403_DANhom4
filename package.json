@@ -1,14 +1,29 @@
 {
+  "type": "module",
   "scripts": {
-    "dev": "vite --open",
+    "dev": "concurrently -k \"npm:server\" \"npm:vite\"",
+    "vite": "vite",
+    "open:browser": "powershell -NoProfile -Command \"Start-Process 'http://localhost:5173'\"",
+    "server": "node server/index.js",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test"
   },
   "dependencies": {
     "@vitejs/plugin-vue": "latest",
     "bootstrap": "^5.3.8",
     "bootstrap-icons": "^1.13.1",
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0",
+    "msnodesqlv8": "^6.1.0",
+    "mssql": "^12.7.11",
     "vite": "latest",
     "vue": "latest"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  },
+  "overrides": {
+    "@azure/msal-node": "^7.1.1"
   }
 }

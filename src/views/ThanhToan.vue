@@ -189,33 +189,55 @@
 
           <div class="qr-box">
             <img
-              v-if="selectedMethod.qr"
-              :src="selectedMethod.qr"
+              v-if="selectedQr"
+              :src="selectedQr"
               alt="Mã QR thanh toán"
             >
 
             <i
               v-else
-              class="bi bi-cash-coin cod-icon"
+              :class="selectedMethod.id === 'cod'
+                ? 'bi bi-cash-coin cod-icon'
+                : 'bi bi-shield-lock cod-icon'"
             ></i>
 
             <h4>
               {{
-                selectedMethod.qr
-                  ? 'Quét mã để thanh toán'
-                  : 'Thanh toán khi nhận hàng'
+                selectedMethod.id === 'bank'
+                  ? 'Quét QR chuyển khoản MBank'
+                  : selectedMethod.id === 'vnpay'
+                  ? 'Thanh toán qua VNPay sandbox'
+                  : selectedQr
+                    ? 'Quét mã để thanh toán'
+                    : 'Thanh toán khi nhận hàng'
               }}
             </h4>
 
-            <p>
-              TÊN:
-              <b>NGUYỄN THANH LONG</b>
+            <template v-if="selectedMethod.id === 'bank'">
+              <p>NGÂN HÀNG: <b>MBank</b></p>
+              <p>SỐ TÀI KHOẢN: <b>0762525797</b></p>
+              <p>Đơn hàng chờ xác nhận sau khi cửa hàng đối soát chuyển khoản.</p>
+            </template>
+
+            <p v-if="!['vnpay', 'bank', 'cod'].includes(selectedMethod.id)">
+              <template v-if="selectedMethod.id !== 'bank' && selectedMethod.id !== 'cod'">
+                TÊN:
+                <b>NGUYỄN THANH LONG</b>
+              </template>
             </p>
 
             <p>
               SỐ TIỀN CẦN THANH TOÁN:
               <strong>{{ money(grandTotal) }}</strong>
             </p>
+
+              <p
+                v-if="paymentError"
+                class="payment-error"
+                role="alert"
+              >
+                {{ paymentError }}
+              </p>
 
             <button
               type="button"
@@ -226,7 +248,11 @@
               {{
                 confirming
                   ? 'Đang xử lý...'
-                  : 'Xác nhận thanh toán'
+                  : selectedMethod.id === 'vnpay'
+                    ? 'Tiếp tục đến VNPay'
+                    : selectedMethod.id === 'bank'
+                      ? 'Tôi đã chuyển khoản'
+                    : 'Xác nhận thanh toán'
               }}
             </button>
           </div>
@@ -247,7 +273,9 @@ import { money } from '../utils/format'
 
 const props = defineProps({
   cart: Array,
-  total: Number
+  total: Number,
+  customer: Object,
+  initialDelivery: Object
 })
 
 const emit = defineEmits(['confirm'])
@@ -256,6 +284,7 @@ const shippingFee = 30000
 const submitted = ref(false)
 const showModal = ref(false)
 const confirming = ref(false)
+const paymentError = ref('')
 
 const form = reactive({
   fullName: '',
@@ -263,24 +292,25 @@ const form = reactive({
   city: '',
   district: '',
   ward: '',
-  address: ''
+  address: '',
+  ...(props.initialDelivery || {})
 })
 
 const methods = [
   {
-    id: 'qr',
-    name: 'QR PAY',
-    qr: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=QRPAY'
+    id: 'vnpay',
+    name: 'VNPay',
+    qr: ''
+  },
+  {
+    id: 'bank',
+    name: 'QR PAY (MBank)',
+    qr: ''
   },
   {
     id: 'momo',
     name: 'MOMO PAY',
     qr: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=MOMOPAY'
-  },
-  {
-    id: 'bank',
-    name: 'Thanh toán ngân hàng',
-    qr: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=BANKPAY'
   },
   {
     id: 'cod',
@@ -290,6 +320,15 @@ const methods = [
 ]
 
 const selectedMethod = ref(methods[0])
+
+const selectedQr = computed(() => {
+  if (selectedMethod.value.id === 'bank') {
+    const addInfo = encodeURIComponent('SoccerHub thanh toan don hang')
+    return `https://img.vietqr.io/image/MB-0762525797-compact2.png?amount=${Math.round(grandTotal.value)}&addInfo=${addInfo}`
+  }
+
+  return selectedMethod.value.qr
+})
 
 const subtotal = computed(() =>
   props.cart.reduce(
@@ -353,7 +392,50 @@ function openPayment() {
   showModal.value = true
 }
 
-function confirm() {
+async function confirm() {
+  if (selectedMethod.value.id === 'vnpay') {
+    confirming.value = true
+    paymentError.value = ''
+
+    try {
+      const response = await fetch('/api/payments/vnpay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer: {
+            username: props.customer?.username,
+            name: props.customer?.name || form.fullName
+          },
+          delivery: { ...form },
+          items: props.cart.map((item) => ({
+            id: item.id,
+            qty: Number(item.qty)
+          }))
+        })
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.message || 'Không thể tạo giao dịch VNPay.')
+
+      sessionStorage.setItem('soccerhub-vnpay-pending', JSON.stringify({
+        code: result.orderCode,
+        cart: props.cart,
+        currentUser: {
+          username: props.customer?.username,
+          name: props.customer?.name,
+          email: props.customer?.email,
+          role: props.customer?.role
+        },
+        delivery: { ...form }
+      }))
+      window.location.assign(result.paymentUrl)
+      return
+    } catch (error) {
+      paymentError.value = error.message || 'Không thể kết nối máy chủ thanh toán.'
+      confirming.value = false
+      return
+    }
+  }
+
   confirming.value = true
 
   window.setTimeout(() => {

@@ -136,6 +136,7 @@
               <select
                 class="status-select"
                 v-model="item.status"
+                @change="$emit('status', item.code, item.status)"
               >
 
                 <option>
@@ -382,6 +383,8 @@ const props = defineProps({
   currentUser: Object
 })
 
+const emit = defineEmits(['status', 'review'])
+
 const keyword = ref('')
 
 const selected = ref(null)
@@ -453,6 +456,7 @@ const shippingCount = computed(() => {
 function cancelOrder(item) {
 
   item.status = 'Đã hủy'
+  emit('status', item.code, item.status)
 }
 
 function canReview(item) {
@@ -480,6 +484,7 @@ function submitReview(item) {
     star: form.star,
     content: form.content
   }
+  emit('review', item.code, item.review)
 }
 
 function statusClass(status) {
