@@ -480,11 +480,10 @@ function submitReview(item) {
     return
   }
 
-  item.review = {
+  emit('review', item.code, {
     star: form.star,
     content: form.content
-  }
-  emit('review', item.code, item.review)
+  })
 }
 
 function statusClass(status) {

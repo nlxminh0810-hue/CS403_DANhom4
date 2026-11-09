@@ -70,7 +70,6 @@
         v-else-if="page === 'login'"
         :customers="customers"
         @submit="login"
-        @social="socialLogin"
         @forgot="page = 'forgot'"
         @register="openRegister"
         @navigate="setPage"
@@ -81,7 +80,6 @@
         v-else-if="page === 'register'"
         :customers="customers"
         @submit="register"
-        @social="socialLogin"
         @login="openLogin"
         @navigate="setPage"
       />
@@ -116,6 +114,7 @@
         :orders="orders"
         :current-user="currentUser"
         @status="updateOrderStatus"
+        @review="submitReview"
       />
 
       <!-- PROFILE -->
@@ -172,7 +171,8 @@
 import {
   computed,
   onMounted,
-  ref
+  ref,
+  watch
 } from 'vue'
 
 import AppHeader from './components/AppHeader.vue'
@@ -212,16 +212,27 @@ const products = ref([])
 const orders = ref([])
 const customers = ref([])
 const apiToken = ref(sessionStorage.getItem('soccerhub-session') || '')
+const productImages = import.meta.glob('./assets/img/*.{png,jpg,jpeg,webp}', {
+  eager: true,
+  query: '?url',
+  import: 'default'
+})
 
 async function apiFetch(path, options = {}) {
   const headers = { ...(options.headers || {}) }
   if (apiToken.value) headers.Authorization = `Bearer ${apiToken.value}`
-  if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
+  if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) headers['Content-Type'] = 'application/json'
   return fetch(path, { ...options, headers })
 }
 
 function productWithImage(product) {
-  return { ...product, image: new URL(`./assets/img/img${product.id}.png`, import.meta.url).href }
+  const imagePath = String(product.imagePath || '')
+  const imageName = imagePath.split('/').pop()
+  const image = imagePath.startsWith('/uploads/')
+    ? imagePath
+    : productImages[`./assets/img/${imageName}`] ||
+    productImages[`./assets/img/img${product.id}.png`]
+  return { ...product, image }
 }
 
 async function loadProducts(admin = false) {
@@ -245,6 +256,39 @@ async function loadOrders() {
 
 const cart = ref([])
 const checkoutDelivery = ref(null)
+const cartReady = ref(false)
+let cartSaveTimeout
+
+async function loadCart() {
+  const response = await apiFetch('/api/cart')
+  const result = await response.json()
+  if (!response.ok) throw new Error(result.message || 'Không thể tải giỏ hàng.')
+  cart.value = (result.cart || []).map(productWithImage)
+  cartReady.value = true
+}
+
+function scheduleCartSave() {
+  if (!cartReady.value || !apiToken.value) return
+  window.clearTimeout(cartSaveTimeout)
+  cartSaveTimeout = window.setTimeout(async () => {
+    try {
+      const response = await apiFetch('/api/cart', {
+        method: 'PUT',
+        body: JSON.stringify({
+          items: cart.value.map(({ id, qty, color, size }) => ({ id, qty, color, size }))
+        })
+      })
+      if (!response.ok) {
+        const result = await response.json()
+        throw new Error(result.message || 'Không thể đồng bộ giỏ hàng.')
+      }
+    } catch (error) {
+      console.error('Cart synchronization failed:', error.message)
+    }
+  }, 300)
+}
+
+watch(cart, scheduleCartSave, { deep: true })
 
 const profile = ref({
 
@@ -448,6 +492,52 @@ function openRegister() {
   page.value = 'register'
 }
 
+async function restoreSession() {
+  try {
+    await loadProducts()
+  } catch (error) {
+    console.error('Initial product loading failed:', error)
+  }
+
+  if (!apiToken.value) return
+
+  try {
+    const response = await apiFetch('/api/auth/me')
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message || 'Phiên đăng nhập hết hạn.')
+    currentUser.value = result.user
+    Object.assign(profile.value, {
+      name: result.user.name || '',
+      phone: result.user.phone || '',
+      email: result.user.email || '',
+      address: result.user.address || '',
+      birth: result.user.birth || '',
+      gender: result.user.gender || '',
+      bio: result.user.bio || ''
+    })
+  } catch (error) {
+    console.info('Stored session is no longer valid:', error.message)
+    apiToken.value = ''
+    currentUser.value = null
+    sessionStorage.removeItem('soccerhub-session')
+    return
+  }
+
+  try {
+    await loadOrders()
+    await loadCart()
+    if (currentUser.value.role === 'admin') {
+      await loadProducts(true)
+      const response = await apiFetch('/api/admin/users')
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.message)
+      customers.value = result.customers || []
+    }
+  } catch (error) {
+    console.error('Restored account data could not be loaded:', error)
+  }
+}
+
 async function login(credentials) {
   let found = customers.value.find(
     (c) => c.username === credentials.email && c.password === credentials.password
@@ -486,7 +576,7 @@ async function login(credentials) {
 
   apiToken.value = sessionStorage.getItem('soccerhub-session') || apiToken.value
   try {
-    await Promise.all([loadProducts(found.role === 'admin'), loadOrders()])
+    await Promise.all([loadProducts(found.role === 'admin'), loadOrders(), loadCart()])
     if (found.role === 'admin') {
       const response = await apiFetch('/api/admin/users')
       const result = await response.json()
@@ -517,7 +607,7 @@ async function register(user) {
     user.email || `${user.username}@soccerhub.vn`
 
   try {
-    await Promise.all([loadProducts(), loadOrders()])
+    await Promise.all([loadProducts(), loadOrders(), loadCart()])
   } catch (error) {
     console.error('Account was created, but initial data loading failed:', error)
     alert(`Tài khoản đã tạo và đăng nhập thành công, nhưng tải dữ liệu ban đầu thất bại. ${error.message}`)
@@ -525,35 +615,18 @@ async function register(user) {
   page.value = 'profile'
 }
 
-function socialLogin(provider) {
-
-  currentUser.value = {
-
-    username:
-      provider.toLowerCase(),
-
-    name:
-      `${provider} User`,
-
-    email:
-      `${provider.toLowerCase()}@soccerhub.vn`,
-
-    role: 'user'
+async function logout() {
+  if (apiToken.value) {
+    try {
+      await apiFetch('/api/auth/logout', { method: 'POST' })
+    } catch (error) {
+      console.error('Logout request failed:', error)
+    }
   }
-
-  profile.value.name =
-    currentUser.value.name
-
-  profile.value.email =
-    currentUser.value.email
-
-  page.value = 'profile'
-}
-
-function logout() {
 
   currentUser.value = null
   apiToken.value = ''
+  cartReady.value = false
   sessionStorage.removeItem('soccerhub-session')
 
   cart.value = []
@@ -561,15 +634,21 @@ function logout() {
   page.value = 'home'
 }
 
-function deleteAccount() {
-
+async function deleteAccount() {
   if (
     !confirm(
       'Bạn có chắc muốn xóa tài khoản?'
     )
   ) return
 
-  logout()
+  try {
+    const response = await apiFetch('/api/account', { method: 'DELETE' })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message || 'Không thể xóa tài khoản.')
+    await logout()
+  } catch (error) {
+    alert(error.message || 'Không thể xóa tài khoản.')
+  }
 }
 
 /* =========================
@@ -676,7 +755,7 @@ async function confirmOrder(payment) {
   const method = typeof payment === 'string' ? payment : payment.method
   const delivery = typeof payment === 'string' ? checkoutDelivery.value : payment.delivery
   try {
-    const response = await apiFetch('/api/orders', { method:'POST', body:JSON.stringify({ customer:currentUser.value, delivery, items:cart.value.map(({id,qty})=>({id,qty})), methodId, method }) })
+    const response = await apiFetch('/api/orders', { method:'POST', body:JSON.stringify({ customer:currentUser.value, delivery, items:cart.value.map(({id,qty,color,size})=>({id,qty,color,size})), methodId, method }) })
     const result = await response.json()
     if (!response.ok) throw new Error(result.message || 'Could not create order')
     await Promise.all([loadOrders(), loadProducts()])
@@ -735,18 +814,47 @@ async function resumeVnpayReturn() {
   }
 }
 
-onMounted(resumeVnpayReturn)
-
 /* =========================
    PRODUCT ADMIN
 ========================= */
 
+async function uploadProductImage(id, imageFile) {
+  const formData = new FormData()
+  formData.append('image', imageFile)
+  const response = await apiFetch(`/api/admin/products/${id}/image`, {
+    method: 'POST',
+    body: formData
+  })
+  const result = await response.json()
+  if (!response.ok) throw new Error(result.message || 'Không thể tải ảnh sản phẩm.')
+}
+
 async function addProduct(product) {
-  try { const r=await apiFetch('/api/admin/products',{method:'POST',body:JSON.stringify(product)});const d=await r.json();if(!r.ok)throw new Error(d.message);await loadProducts(true) } catch(error){alert(error.message)}
+  try {
+    const { imageFile, ...data } = product
+    const response = await apiFetch('/api/admin/products', { method: 'POST', body: JSON.stringify(data) })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message || 'Không thể tạo sản phẩm.')
+    if (imageFile) await uploadProductImage(result.id, imageFile)
+    await loadProducts(true)
+  } catch (error) {
+    alert(error.message)
+    await loadProducts(true)
+  }
 }
 
 async function updateProduct(id,patch) {
-  try { const r=await apiFetch('/api/admin/products/'+id,{method:'PUT',body:JSON.stringify(patch)});const d=await r.json();if(!r.ok)throw new Error(d.message);await loadProducts(true) } catch(error){alert(error.message)}
+  try {
+    const { imageFile, ...data } = patch
+    const response = await apiFetch(`/api/admin/products/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message || 'Không thể cập nhật sản phẩm.')
+    if (imageFile) await uploadProductImage(id, imageFile)
+    await loadProducts(true)
+  } catch (error) {
+    alert(error.message)
+    await loadProducts(true)
+  }
 }
 
 async function deleteProduct(id) {
@@ -782,5 +890,22 @@ async function updateOrderStatus(code, status) {
   }
 }
 
-onMounted(async()=>{ try { await loadProducts() } catch(error) { console.error(error) } })
+async function submitReview(code, review) {
+  try {
+    const response = await apiFetch(`/api/orders/${encodeURIComponent(code)}/review`, {
+      method: 'POST',
+      body: JSON.stringify(review)
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.message || 'Không thể lưu đánh giá.')
+    await loadOrders()
+  } catch (error) {
+    alert(error.message || 'Không thể lưu đánh giá.')
+  }
+}
+
+onMounted(async () => {
+  await restoreSession()
+  await resumeVnpayReturn()
+})
 </script>

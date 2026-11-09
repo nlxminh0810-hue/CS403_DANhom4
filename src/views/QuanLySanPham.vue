@@ -73,6 +73,16 @@
           <textarea v-model="form.desc"></textarea>
         </label>
 
+        <label class="full">
+          Ảnh sản phẩm
+          <input type="file" accept="image/png,image/jpeg,image/webp" @change="selectImage">
+          <small v-if="imageError" class="error-text">{{ imageError }}</small>
+        </label>
+
+        <div v-if="imagePreview || form.image" class="product-image-preview">
+          <img :src="imagePreview || form.image" alt="Ảnh sản phẩm xem trước">
+        </div>
+
         <div class="admin-toolbar">
 
           <button class="primary">
@@ -195,6 +205,9 @@ const emit = defineEmits([
 ])
 
 const editingId = ref(null)
+const imageFile = ref(null)
+const imagePreview = ref('')
+const imageError = ref('')
 
 const form = reactive(emptyForm())
 
@@ -205,11 +218,16 @@ function emptyForm() {
     category: 'Phụ kiện',
     price: 199000,
     stock: 50,
-    desc: ''
+    desc: '',
+    image: ''
   }
 }
 
 function reset() {
+  if (imagePreview.value) URL.revokeObjectURL(imagePreview.value)
+  imageFile.value = null
+  imagePreview.value = ''
+  imageError.value = ''
 
   editingId.value = null
 
@@ -220,6 +238,10 @@ function reset() {
 }
 
 function edit(item) {
+  if (imagePreview.value) URL.revokeObjectURL(imagePreview.value)
+  imageFile.value = null
+  imagePreview.value = ''
+  imageError.value = ''
 
   editingId.value = item.id
 
@@ -229,16 +251,44 @@ function edit(item) {
   )
 }
 
+function selectImage(event) {
+  imageError.value = ''
+  const file = event.target.files?.[0]
+  if (!file) return
+  if (file.size > 5 * 1024 * 1024) {
+    imageError.value = 'Ảnh không được vượt quá 5 MB.'
+    if (imagePreview.value) URL.revokeObjectURL(imagePreview.value)
+    imageFile.value = null
+    imagePreview.value = ''
+    event.target.value = ''
+    return
+  }
+  if (imagePreview.value) URL.revokeObjectURL(imagePreview.value)
+  imageFile.value = file
+  imagePreview.value = URL.createObjectURL(file)
+}
+
 function save() {
 
   if (!form.name.trim()) return
+  if (imageError.value) return
+
+  if (!Number.isFinite(Number(form.price)) || Number(form.price) < 0 ||
+      !Number.isInteger(Number(form.stock)) || Number(form.stock) < 0) {
+    imageError.value = 'Giá hoặc số lượng tồn kho không hợp lệ.'
+    return
+  }
+  if (!editingId.value && !imageFile.value) {
+    imageError.value = 'Chọn ảnh sản phẩm trước khi thêm mới.'
+    return
+  }
 
   if (editingId.value) {
 
     emit(
       'update',
       editingId.value,
-      { ...form }
+      { ...form, imageFile: imageFile.value }
     )
 
   } else {
@@ -247,6 +297,7 @@ function save() {
       'add',
       {
         ...form,
+        imageFile: imageFile.value,
         id: Date.now()
       }
     )

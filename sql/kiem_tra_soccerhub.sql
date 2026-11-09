@@ -1,3 +1,4 @@
+-- Read-only verification script. Run after sql/soccerhub.sql; it does not change data.
 USE [SoccerHub];
 GO
 
@@ -14,7 +15,9 @@ SELECT N'SoccerHub' AS TenDatabase,
        (SELECT COUNT(*) FROM dbo.DonHang) AS SoDonHang,
        (SELECT COUNT(*) FROM dbo.ChiTietDonHang) AS SoDongChiTietDon,
        (SELECT COUNT(*) FROM dbo.ThanhToan) AS SoThanhToan,
-       (SELECT COUNT(*) FROM dbo.DanhGia) AS SoDanhGia;
+    (SELECT COUNT(*) FROM dbo.DanhGia) AS SoDanhGia,
+    (SELECT COUNT(*) FROM dbo.PhienDangNhap) AS SoPhienDangNhap,
+    (SELECT COUNT(*) FROM dbo.MaDatLaiMatKhau) AS SoMaDatLaiMatKhau;
 
 SELECT MaVT, TenVaiTro FROM dbo.VaiTro ORDER BY MaVT;
 
@@ -40,7 +43,7 @@ FROM dbo.GioHang g
 JOIN dbo.NguoiDung u ON u.MaND = g.MaND
 ORDER BY g.MaGH;
 
-SELECT ct.MaGH, u.TenDN, ct.MaSP, p.TenSP, ct.SoLuong
+SELECT ct.MaGH, u.TenDN, ct.MaSP, p.TenSP, ct.MauSac, ct.KichCo, ct.SoLuong
 FROM dbo.ChiTietGioHang ct
 JOIN dbo.GioHang g ON g.MaGH = ct.MaGH
 JOIN dbo.NguoiDung u ON u.MaND = g.MaND
@@ -54,7 +57,7 @@ JOIN dbo.NguoiDung u ON u.MaND = d.MaND
 LEFT JOIN dbo.ThanhToan t ON t.MaDH = d.MaDH
 ORDER BY d.MaDH;
 
-SELECT ct.MaDH, ct.MaSP, ct.TenSPLucDat, ct.DonGia, ct.SoLuong,
+SELECT ct.MaDH, ct.MaSP, ct.TenSPLucDat, ct.MauSac, ct.KichCo, ct.DonGia, ct.SoLuong,
        ct.DonGia * ct.SoLuong AS ThanhTien
 FROM dbo.ChiTietDonHang ct
 ORDER BY ct.MaDH, ct.MaSP;

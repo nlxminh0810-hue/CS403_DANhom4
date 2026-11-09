@@ -57,7 +57,6 @@
       <div class="checkout-payment">
         <div>
           <h3>Thông tin giao hàng</h3>
-
           <div class="delivery-grid">
             <label>
               <input
@@ -219,13 +218,6 @@
               <p>Đơn hàng chờ xác nhận sau khi cửa hàng đối soát chuyển khoản.</p>
             </template>
 
-            <p v-if="!['vnpay', 'bank', 'cod'].includes(selectedMethod.id)">
-              <template v-if="selectedMethod.id !== 'bank' && selectedMethod.id !== 'cod'">
-                TÊN:
-                <b>NGUYỄN THANH LONG</b>
-              </template>
-            </p>
-
             <p>
               SỐ TIỀN CẦN THANH TOÁN:
               <strong>{{ money(grandTotal) }}</strong>
@@ -304,13 +296,8 @@ const methods = [
   },
   {
     id: 'bank',
-    name: 'QR PAY (MBank)',
+    name: 'Ngân hàng (MBank)',
     qr: ''
-  },
-  {
-    id: 'momo',
-    name: 'MOMO PAY',
-    qr: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=MOMOPAY'
   },
   {
     id: 'cod',

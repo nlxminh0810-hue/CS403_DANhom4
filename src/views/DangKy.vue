@@ -88,38 +88,6 @@
           {{ isLoading ? 'Đang tạo tài khoản...' : 'Tạo tài khoản' }}
         </button>
 
-        <button
-          class="social-btn google-btn"
-          type="button"
-          @click="$emit('social', 'Google')"
-        >
-
-          <span class="social-icon">
-            <i class="bi bi-google"></i>
-          </span>
-
-          <span>
-            Tiếp tục với Google
-          </span>
-
-        </button>
-
-        <button
-          class="social-btn facebook-btn"
-          type="button"
-          @click="$emit('social', 'Facebook')"
-        >
-
-          <span class="social-icon">
-            <i class="bi bi-facebook"></i>
-          </span>
-
-          <span>
-            Tiếp tục với Facebook
-          </span>
-
-        </button>
-
       </div>
     </form>
   </section>
@@ -140,7 +108,6 @@ const props = defineProps({
 
 const emit = defineEmits([
   'submit',
-  'social',
   'login',
   'navigate'
 ])

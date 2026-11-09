@@ -1,5 +1,12 @@
 -- Run this file in SQL Server Management Studio.
 -- Creates SoccerHub if needed, then creates the schema and demo catalog.
+SET ANSI_NULLS ON;
+SET ANSI_PADDING ON;
+SET ANSI_WARNINGS ON;
+SET ARITHABORT ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
+SET QUOTED_IDENTIFIER ON;
+SET NUMERIC_ROUNDABORT OFF;
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
@@ -77,8 +84,10 @@ BEGIN
     CREATE TABLE dbo.ChiTietGioHang (
         MaGH INT NOT NULL CONSTRAINT FK_ChiTietGioHang_GioHang REFERENCES dbo.GioHang(MaGH) ON DELETE CASCADE,
         MaSP INT NOT NULL CONSTRAINT FK_ChiTietGioHang_SanPham REFERENCES dbo.SanPham(MaSP),
+        MauSac NVARCHAR(30) NOT NULL CONSTRAINT DF_ChiTietGioHang_Mau DEFAULT N'',
+        KichCo NVARCHAR(10) NOT NULL CONSTRAINT DF_ChiTietGioHang_Size DEFAULT N'',
         SoLuong INT NOT NULL,
-        CONSTRAINT PK_ChiTietGioHang PRIMARY KEY (MaGH, MaSP),
+        CONSTRAINT PK_ChiTietGioHang PRIMARY KEY (MaGH, MaSP, MauSac, KichCo),
         CONSTRAINT CK_ChiTietGioHang_SoLuong CHECK (SoLuong > 0)
     );
     CREATE TABLE dbo.DonHang (
@@ -103,10 +112,12 @@ BEGIN
     CREATE TABLE dbo.ChiTietDonHang (
         MaDH INT NOT NULL CONSTRAINT FK_ChiTietDonHang_DonHang REFERENCES dbo.DonHang(MaDH),
         MaSP INT NOT NULL CONSTRAINT FK_ChiTietDonHang_SanPham REFERENCES dbo.SanPham(MaSP),
+        MauSac NVARCHAR(30) NOT NULL CONSTRAINT DF_ChiTietDonHang_Mau DEFAULT N'',
+        KichCo NVARCHAR(10) NOT NULL CONSTRAINT DF_ChiTietDonHang_Size DEFAULT N'',
         DonGia DECIMAL(18,2) NOT NULL,
         SoLuong INT NOT NULL,
         TenSPLucDat NVARCHAR(150) NOT NULL,
-        CONSTRAINT PK_ChiTietDonHang PRIMARY KEY (MaDH, MaSP),
+        CONSTRAINT PK_ChiTietDonHang PRIMARY KEY (MaDH, MaSP, MauSac, KichCo),
         CONSTRAINT CK_ChiTietDonHang_Gia CHECK (DonGia >= 0),
         CONSTRAINT CK_ChiTietDonHang_SoLuong CHECK (SoLuong > 0)
     );
@@ -118,7 +129,7 @@ BEGIN
         TrangThai VARCHAR(30) NOT NULL CONSTRAINT DF_ThanhToan_TrangThai DEFAULT 'ChoThanhToan',
         NgayTT DATE NULL,
         MaGiaoDich VARCHAR(100) NULL,
-        CONSTRAINT CK_ThanhToan_PhuongThuc CHECK (PhuongThuc IN ('COD', 'QR_PAY', 'MOMO', 'BANK', 'VNPAY')),
+        CONSTRAINT CK_ThanhToan_PhuongThuc CHECK (PhuongThuc IN ('COD', 'BANK', 'VNPAY')),
         CONSTRAINT CK_ThanhToan_TrangThai CHECK (TrangThai IN
             ('ChoThanhToan', 'DaThanhToan', 'ThatBai', 'DaHuy', 'ChoHoanTien', 'DaHoanTien')),
         CONSTRAINT CK_ThanhToan_Ngay CHECK (
@@ -155,11 +166,77 @@ ELSE IF (SELECT COUNT(*) FROM sys.tables
     THROW 51000, N'Schema chưa đầy đủ. Không tự động ghi đè database hiện có.', 1;
 GO
 
--- Allow VNPay when upgrading a database created from the earlier schema.
+IF OBJECT_ID(N'dbo.PhienDangNhap', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.PhienDangNhap (
+        MaPhien BIGINT IDENTITY(1,1) CONSTRAINT PK_PhienDangNhap PRIMARY KEY,
+        MaND INT NOT NULL CONSTRAINT FK_PhienDangNhap_NguoiDung REFERENCES dbo.NguoiDung(MaND) ON DELETE CASCADE,
+        TokenHash CHAR(64) NOT NULL CONSTRAINT UQ_PhienDangNhap_Token UNIQUE,
+        NgayTao DATETIME2(0) NOT NULL CONSTRAINT DF_PhienDangNhap_NgayTao DEFAULT SYSDATETIME(),
+        HanHet DATETIME2(0) NOT NULL,
+        CONSTRAINT CK_PhienDangNhap_Han CHECK (HanHet > NgayTao)
+    );
+    CREATE INDEX IX_PhienDangNhap_UserExpiry ON dbo.PhienDangNhap(MaND, HanHet);
+END;
+
+IF OBJECT_ID(N'dbo.MaDatLaiMatKhau', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.MaDatLaiMatKhau (
+        MaDatLai BIGINT IDENTITY(1,1) CONSTRAINT PK_MaDatLaiMatKhau PRIMARY KEY,
+        MaND INT NOT NULL CONSTRAINT FK_MaDatLaiMatKhau_NguoiDung REFERENCES dbo.NguoiDung(MaND) ON DELETE CASCADE,
+        MaCodeHash CHAR(64) NOT NULL,
+        NgayTao DATETIME2(0) NOT NULL CONSTRAINT DF_MaDatLai_NgayTao DEFAULT SYSDATETIME(),
+        HanHet DATETIME2(0) NOT NULL,
+        DaDung BIT NOT NULL CONSTRAINT DF_MaDatLai_DaDung DEFAULT 0,
+        CONSTRAINT CK_MaDatLai_Han CHECK (HanHet > NgayTao)
+    );
+    CREATE INDEX IX_MaDatLai_UserExpiry ON dbo.MaDatLaiMatKhau(MaND, HanHet, DaDung);
+END;
+
+IF COL_LENGTH(N'dbo.ChiTietGioHang', N'MauSac') IS NULL
+   OR COL_LENGTH(N'dbo.ChiTietGioHang', N'KichCo') IS NULL
+BEGIN
+    BEGIN TRANSACTION;
+    IF OBJECT_ID(N'dbo.PK_ChiTietGioHang', N'PK') IS NOT NULL
+        ALTER TABLE dbo.ChiTietGioHang DROP CONSTRAINT PK_ChiTietGioHang;
+    IF COL_LENGTH(N'dbo.ChiTietGioHang', N'MauSac') IS NULL
+        ALTER TABLE dbo.ChiTietGioHang ADD MauSac NVARCHAR(30) NOT NULL CONSTRAINT DF_ChiTietGioHang_Mau DEFAULT N'' WITH VALUES;
+    IF COL_LENGTH(N'dbo.ChiTietGioHang', N'KichCo') IS NULL
+        ALTER TABLE dbo.ChiTietGioHang ADD KichCo NVARCHAR(10) NOT NULL CONSTRAINT DF_ChiTietGioHang_Size DEFAULT N'' WITH VALUES;
+    ALTER TABLE dbo.ChiTietGioHang ADD CONSTRAINT PK_ChiTietGioHang PRIMARY KEY (MaGH, MaSP, MauSac, KichCo);
+    COMMIT TRANSACTION;
+END;
+
+IF COL_LENGTH(N'dbo.ChiTietDonHang', N'MauSac') IS NULL
+   OR COL_LENGTH(N'dbo.ChiTietDonHang', N'KichCo') IS NULL
+BEGIN
+    BEGIN TRANSACTION;
+    IF OBJECT_ID(N'dbo.PK_ChiTietDonHang', N'PK') IS NOT NULL
+        ALTER TABLE dbo.ChiTietDonHang DROP CONSTRAINT PK_ChiTietDonHang;
+    IF COL_LENGTH(N'dbo.ChiTietDonHang', N'MauSac') IS NULL
+        ALTER TABLE dbo.ChiTietDonHang ADD MauSac NVARCHAR(30) NOT NULL CONSTRAINT DF_ChiTietDonHang_Mau DEFAULT N'' WITH VALUES;
+    IF COL_LENGTH(N'dbo.ChiTietDonHang', N'KichCo') IS NULL
+        ALTER TABLE dbo.ChiTietDonHang ADD KichCo NVARCHAR(10) NOT NULL CONSTRAINT DF_ChiTietDonHang_Size DEFAULT N'' WITH VALUES;
+    ALTER TABLE dbo.ChiTietDonHang ADD CONSTRAINT PK_ChiTietDonHang PRIMARY KEY (MaDH, MaSP, MauSac, KichCo);
+    COMMIT TRANSACTION;
+END;
+GO
+
+-- Convert legacy methods to bank transfer and constrain future methods.
+BEGIN TRANSACTION;
 IF OBJECT_ID(N'dbo.CK_ThanhToan_PhuongThuc', N'C') IS NOT NULL
     ALTER TABLE dbo.ThanhToan DROP CONSTRAINT CK_ThanhToan_PhuongThuc;
+UPDATE dbo.ThanhToan
+SET PhuongThuc = 'BANK',
+    MaGiaoDich = CASE
+        WHEN MaGiaoDich LIKE 'DEMO-QR-%'
+            THEN REPLACE(MaGiaoDich, 'DEMO-QR-', 'DEMO-BANK-')
+        ELSE MaGiaoDich
+    END
+WHERE PhuongThuc IN ('QR_PAY', 'MOMO');
 ALTER TABLE dbo.ThanhToan ADD CONSTRAINT CK_ThanhToan_PhuongThuc
-    CHECK (PhuongThuc IN ('COD', 'QR_PAY', 'MOMO', 'BANK', 'VNPAY'));
+    CHECK (PhuongThuc IN ('COD', 'BANK', 'VNPAY'));
+COMMIT TRANSACTION;
 GO
 
 IF NOT EXISTS (SELECT 1 FROM dbo.VaiTro WHERE TenVaiTro = N'Quản trị viên')
@@ -193,6 +270,34 @@ WHERE NOT EXISTS (SELECT 1 FROM dbo.SanPham existing WHERE existing.MaSP = seed.
 SET IDENTITY_INSERT dbo.SanPham OFF;
 GO
 
+INSERT dbo.SanPham (TenSP, Gia, SoLuong, MoTa, MaDM)
+SELECT seed.TenSP, seed.Gia, seed.SoLuong, seed.MoTa, category.MaDM
+FROM (VALUES
+    (N'Áo đấu sân khách', 319000, 80, N'Áo đấu nhẹ, thoáng khí cho các trận sân khách.', N'Áo đấu'),
+    (N'Áo tập luyện SoccerHub', 259000, 95, N'Áo tập co giãn, phù hợp luyện tập hằng ngày.', N'Áo đấu'),
+    (N'Giày đá bóng đế FG', 1699000, 38, N'Giày đế FG bám sân cỏ tự nhiên.', N'Giày bóng đá'),
+    (N'Giày futsal trong nhà', 1399000, 42, N'Giày futsal nhẹ, đế bám sàn trong nhà.', N'Giày bóng đá'),
+    (N'Balo thể thao đội bóng', 429000, 64, N'Balo nhiều ngăn đựng đồ tập và giày bóng đá.', N'Phụ kiện'),
+    (N'Bóng futsal tiêu chuẩn', 389000, 52, N'Bóng futsal có độ nảy phù hợp thi đấu trong nhà.', N'Phụ kiện')
+) AS seed(TenSP, Gia, SoLuong, MoTa, TenDM)
+INNER JOIN dbo.DanhMuc category ON category.TenDM = seed.TenDM
+WHERE NOT EXISTS (SELECT 1 FROM dbo.SanPham existing WHERE existing.TenSP = seed.TenSP);
+GO
+
+INSERT dbo.SanPham (TenSP, Gia, SoLuong, MoTa, MaDM)
+SELECT seed.TenSP, seed.Gia, seed.SoLuong, seed.MoTa, category.MaDM
+FROM (VALUES
+    (N'Bóng tập luyện màu hồng', 329000, 45, N'Bóng tập luyện nhẹ, dễ quan sát trên sân.', N'Phụ kiện'),
+    (N'Bóng thi đấu sân cỏ', 459000, 60, N'Bóng đá tập luyện trên sân cỏ tự nhiên.', N'Phụ kiện'),
+    (N'Găng tay thủ môn', 549000, 32, N'Găng thủ môn có lớp bám lòng bàn tay.', N'Phụ kiện'),
+    (N'Giày sân cỏ nhân tạo Speed', 1499000, 40, N'Giày đinh TF nhẹ, phù hợp sân cỏ nhân tạo.', N'Giày bóng đá'),
+    (N'Giày đá bóng cổ thấp', 1299000, 36, N'Giày bóng đá cổ thấp, ôm chân và linh hoạt.', N'Giày bóng đá'),
+    (N'Bóng phản quang ban đêm', 489000, 28, N'Bóng có màu nổi bật, dễ theo dõi khi tập buổi tối.', N'Phụ kiện')
+) AS seed(TenSP, Gia, SoLuong, MoTa, TenDM)
+INNER JOIN dbo.DanhMuc category ON category.TenDM = seed.TenDM
+WHERE NOT EXISTS (SELECT 1 FROM dbo.SanPham existing WHERE existing.TenSP = seed.TenSP);
+GO
+
 -- Demo login accounts. All four use password: 123456.
 INSERT dbo.NguoiDung (TenDN, Email, MatKhau, SoDT, MaVT, HoTen, TrangThai)
 SELECT seed.TenDN, seed.Email,
@@ -221,12 +326,55 @@ UPDATE dbo.NguoiDung SET DiaChi=N'25 Lê Lợi, Hải Châu, Đà Nẵng', NgayS
 WHERE TenDN='hovanb' AND DiaChi IS NULL;
 GO
 
--- Product image references correspond to src/assets/img/img1.png ... img8.png.
+-- Store each image path in SQL; image binaries are bundled under src/assets/img.
+DECLARE @ProductImages TABLE (
+    TenSP NVARCHAR(150) NOT NULL PRIMARY KEY,
+    DuongDanAnh VARCHAR(500) NOT NULL
+);
+INSERT @ProductImages (TenSP, DuongDanAnh) VALUES
+    (N'Áo đá bóng sân nhà', '/src/assets/img/img1.png'),
+    (N'Quần thể thao cao cấp', '/src/assets/img/img2.png'),
+    (N'Ba lô đựng giày', '/src/assets/img/img3.png'),
+    (N'Bóng thi đấu cao cấp', '/src/assets/img/img4.png'),
+    (N'Áo Messi phiên bản fan', '/src/assets/img/img5.png'),
+    (N'Giày tốc độ sân cỏ nhân tạo', '/src/assets/img/img6.png'),
+    (N'Giày kiểm soát bóng', '/src/assets/img/img7.png'),
+    (N'Tất chống trượt Luxury', '/src/assets/img/img8.png'),
+    (N'Áo đấu sân khách', '/src/assets/img/img9.jpg'),
+    (N'Áo tập luyện SoccerHub', '/src/assets/img/img10.jpg'),
+    (N'Giày đá bóng đế FG', '/src/assets/img/img11.jpg'),
+    (N'Giày futsal trong nhà', '/src/assets/img/img12.jpg'),
+    (N'Balo thể thao đội bóng', '/src/assets/img/img13.jpg'),
+    (N'Bóng futsal tiêu chuẩn', '/src/assets/img/img14.jpg'),
+    (N'Bóng tập luyện màu hồng', '/src/assets/img/img15.jpg'),
+    (N'Bóng thi đấu sân cỏ', '/src/assets/img/img16.jpg'),
+    (N'Găng tay thủ môn', '/src/assets/img/img17.jpg'),
+    (N'Giày sân cỏ nhân tạo Speed', '/src/assets/img/img18.jpg'),
+    (N'Giày đá bóng cổ thấp', '/src/assets/img/img19.jpg'),
+    (N'Bóng phản quang ban đêm', '/src/assets/img/img20.jpg');
+
+UPDATE image
+SET DuongDanAnh = seed.DuongDanAnh,
+    ThuTu = 0
+FROM dbo.HinhAnhSanPham image
+INNER JOIN dbo.SanPham product ON product.MaSP = image.MaSP
+INNER JOIN @ProductImages seed ON seed.TenSP = product.TenSP
+WHERE image.MaAnh = (
+    SELECT TOP (1) existing.MaAnh
+    FROM dbo.HinhAnhSanPham existing
+    WHERE existing.MaSP = product.MaSP
+    ORDER BY existing.ThuTu, existing.MaAnh
+);
+
 INSERT dbo.HinhAnhSanPham (MaSP, DuongDanAnh, ThuTu)
-SELECT p.MaSP, CONCAT('/src/assets/img/img',p.MaSP,'.png'), 0
-FROM dbo.SanPham p
-WHERE p.MaSP BETWEEN 1 AND 8
-  AND NOT EXISTS (SELECT 1 FROM dbo.HinhAnhSanPham a WHERE a.MaSP=p.MaSP);
+SELECT product.MaSP, seed.DuongDanAnh, 0
+FROM @ProductImages seed
+INNER JOIN dbo.SanPham product ON product.TenSP = seed.TenSP
+WHERE NOT EXISTS (
+    SELECT 1 FROM dbo.HinhAnhSanPham existing
+    WHERE existing.MaSP = product.MaSP
+      AND existing.DuongDanAnh = seed.DuongDanAnh
+);
 GO
 
 -- Five repeatable demo orders cover delivery, cancellation and payment states.
@@ -262,9 +410,9 @@ INSERT dbo.ThanhToan (MaDH,PhuongThuc,TrangThai,NgayTT,MaGiaoDich)
 SELECT d.MaDH, seed.PhuongThuc, seed.TrangThai, seed.NgayTT, seed.MaGiaoDich
 FROM (VALUES
     (N'[DEMO-SH001]','COD','DaThanhToan',CONVERT(date,'2026-09-12'),'DEMO-COD-001'),
-    (N'[DEMO-SH002]','VNPAY','DaThanhToan',CONVERT(date,'2026-10-03),'DEMO-VNPAY-002'),
+    (N'[DEMO-SH002]','VNPAY','DaThanhToan',CONVERT(date,'2026-10-03'),'DEMO-VNPAY-002'),
     (N'[DEMO-SH003]','COD','DaHuy',CONVERT(date,NULL),NULL),
-    (N'[DEMO-SH004]','QR_PAY','DaThanhToan',CONVERT(date,'2026-10-17'),'DEMO-QR-004'),
+    (N'[DEMO-SH004]','BANK','DaThanhToan',CONVERT(date,'2026-10-17'),'DEMO-BANK-004'),
     (N'[DEMO-SH005]','COD','ChoThanhToan',CONVERT(date,NULL),NULL)
 ) AS seed(GhiChu,PhuongThuc,TrangThai,NgayTT,MaGiaoDich)
 JOIN dbo.DonHang d ON CHARINDEX(seed.GhiChu,d.GhiChu)>0
